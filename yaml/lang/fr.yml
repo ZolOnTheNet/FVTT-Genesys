@@ -139,10 +139,10 @@ Genesys:
     Source: Source
     Duration: Durée
     Types:
-      ModifyCharacteristic: Modifier la Caractérisitique
-      ModifyStat: Modifier la Stat
-      ModifySkill: Modifier La compétence
-      ModifyDicePool: Modifier la Réserve de Dés
+      ModifyCharacteristic: Caractérisitique à Modifier
+      ModifyStat: Statistique à Modifier
+      ModifySkill: Compétence à Modifier
+      ModifyDicePool: Réserve de Dés à Modifier
 
   # Dice Prompt Labels
   DicePrompt:
@@ -225,7 +225,7 @@ Genesys:
   Characteristics:
     Brawn: Vigueur
     Agility: Agilité
-    Intellect: Intellect
+    Intellect: Intelligence
     Cunning: Ruse
     Willpower: Volonté
     Presence: Présence
