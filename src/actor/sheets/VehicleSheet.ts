@@ -9,6 +9,7 @@ import GenesysActor from '@/actor/GenesysActor';
 import { CrewDragTransferData, DragTransferData } from '@/data/DragTransferData';
 import { transferInventoryBetweenActors } from '@/operations/TransferBetweenActors';
 import { EquipmentState } from '@/item/data/EquipmentDataModel';
+import CloneActorPrompt from '@/app/CloneActorPrompt';
 
 export default class VehicleSheet extends VueSheet(GenesysActorSheet<VehicleDataModel>) {
 	override get vueComponent() {
@@ -45,9 +46,9 @@ export default class VehicleSheet extends VueSheet(GenesysActorSheet<VehicleData
 			return false;
 		}
 
-		// Make sure that the item in question exists.
+		// Make sure that the item in question exists and this actor doesn't own it.
 		const droppedItem = await fromUuid<GenesysItem<BaseItemDataModel>>(dragData.uuid);
-		if (!droppedItem) {
+		if (!droppedItem || droppedItem.actor?.uuid === this.actor.uuid) {
 			return false;
 		}
 
@@ -58,17 +59,12 @@ export default class VehicleSheet extends VueSheet(GenesysActorSheet<VehicleData
 
 		let clonedDroppedItem: GenesysItem<BaseItemDataModel>[] | undefined | boolean;
 		if (VehicleDataModel.isRelevantTypeForContext('INVENTORY', droppedItem.type)) {
-			const sourceActor = droppedItem.actor;
-
-			if (sourceActor && sourceActor.uuid !== this.actor.uuid) {
+			if (droppedItem.actor) {
 				// If the item was dropped from another actor then we try transfering it and save a reference to it.
 				clonedDroppedItem = await transferInventoryBetweenActors(dragData, this.actor, (type) => VehicleDataModel.isRelevantTypeForContext('INVENTORY', type));
-			} else if (!sourceActor) {
+			} else {
 				// If the item comes from a folder or compendium then let `super` handle the drop and save a reference to it.
 				clonedDroppedItem = await super._onDropItem(event, data);
-			} else {
-				// Ignore dropped items if they are already on this actor; they should be handled by specific components on the sheet.
-				return false;
 			}
 
 			// If we sucessfully cloned the dropped inventory item then update the state for any associated effect.
@@ -97,7 +93,7 @@ export default class VehicleSheet extends VueSheet(GenesysActorSheet<VehicleData
 		}
 
 		// Make sure that the passenger in question exists and can be processed by this method.
-		const crewUuid = dragData.uuid;
+		let crewUuid = dragData.uuid;
 		const droppedEntity = fromUuidSync(crewUuid) as { type: string } | null;
 		if (!droppedEntity || !VehicleDataModel.isRelevantTypeForContext('PASSENGER', droppedEntity.type)) {
 			return false;
@@ -125,6 +121,19 @@ export default class VehicleSheet extends VueSheet(GenesysActorSheet<VehicleData
 			// If the item comes from a folder or compendium then check it's not already on our list.
 			if (this.actor.systemData.hasCrew(crewUuid)) {
 				return false;
+			}
+
+			// If the dropped actor produces unlinked tokens and the user can create actors then ask if they want to
+			// make a clone and save a reference of it instead.
+			if (!(droppedEntity as GenesysActor).prototypeToken.actorLink && (Actor.implementation as typeof GenesysActor).canUserCreate(game.user)) {
+				const actorToAdd = await CloneActorPrompt.promptForInstantiation(droppedEntity as GenesysActor);
+
+				if (actorToAdd) {
+					crewUuid = actorToAdd.uuid;
+				} else {
+					// The prompt was closed so cancel the drop.
+					return false;
+				}
 			}
 		} else {
 			// Ignore dropped passengers if they are already on this actor; they should be handled by specific components on the sheet.

@@ -8,6 +8,7 @@
 
 import { register as registerConfig, ready as readyConfigs } from '@/config';
 import { register as registerCombat } from '@/combat';
+import { register as registerSidebars } from '@/sidebar';
 import { register as registerDice } from '@/dice';
 import { register as registerEnrichers } from '@/enrichers';
 import { register as registerFonts } from '@/fonts';
@@ -23,17 +24,15 @@ import { register as registerVehicles } from '@/actor/data/VehicleDataModel';
 import DicePrompt, { registerWorker } from '@/app/DicePrompt';
 
 import GenesysActor from '@/actor/GenesysActor';
-import { migrate_UseUuidForVehicles } from '@/migrations/1-use-uuid-for-vehicle';
+import GenesysCompendium from '@/sidebar/GenesysCompendium';
+import { performMigrations } from '@/migrations/MigrationHelper';
 
 import './scss/index.scss';
 
-async function doAlphaNotice() {
+async function doAlphaNotice(lastAlpha: string) {
 	if (!game.user.isGM) {
 		return;
 	}
-
-	// Get the last-acknowledged Alpha version notice.
-	const lastAlpha = game.settings.get(SETTINGS_NAMESPACE, KEY_ALPHA_VERSION) as string;
 
 	const [lastMajor, lastMinor, lastRevision] = lastAlpha.split('.').map((v) => parseInt(v));
 	const [currMajor, currMinor, currRevision] = game.system.version.split('.').map((v) => parseInt(v));
@@ -51,9 +50,8 @@ async function doAlphaNotice() {
 	<div style="text-align: center">@symbol[satfhd]</div>
 	<h4 style="font-family: 'Bebas Neue', sans-serif">Bug Fixes & Updates</h4>
 	<ul style="margin-top: 0">
-        <li><a href="https://github.com/Mezryss/FVTT-Genesys/pull/136">PR #136</a> & <a href="https://github.com/Mezryss/FVTT-Genesys/pull/144">PR #144</a>: Bugfix - Minion skills and Combat tabs reflect changes immediately</li>
-        <li><a href="https://github.com/Mezryss/FVTT-Genesys/pull/139">PR #139</a>: Localization - Corrections for the french translation (@ZolOnTheNet)</li>
-        <li><a href="https://github.com/Mezryss/FVTT-Genesys/pull/143">PR #143</a>: Styling - Pad the motivation and notes editors</li>
+        <li><a href="https://github.com/Mezryss/FVTT-Genesys/pull/145">PR #145</a>: FEATURE - Additional enhacenments and fixes to vehicle's sheets</li>
+        <li><a href="https://github.com/Mezryss/FVTT-Genesys/pull/149">PR #149</a>: BUGFIX - Fix initiative message when rolling with symbols</li>
 	</ul>
 	<h4 style="font-family: 'Bebas Neue', sans-serif">Roadmap</h4>
 	<ul style="margin-top: 0">
@@ -88,8 +86,6 @@ async function doAlphaNotice() {
 }
 
 Hooks.once('init', async () => {
-	console.debug('Genesys | Initializing...');
-
 	// System Documents
 	registerActors();
 	registerEffects();
@@ -97,24 +93,25 @@ Hooks.once('init', async () => {
 
 	// Misc. modules with one-time registrations
 	registerCombat();
+	registerSidebars();
 	registerEnrichers();
 	registerFonts();
 	registerDice();
 	registerHandlebarsHelpers();
 	registerSettings();
 	registerConfig();
-
-	console.debug('Genesys | Initialization Complete.');
 });
 
 Hooks.once('ready', async () => {
-	registerStoryPointTracker();
-	await doAlphaNotice();
+	// Get the last-acknowledged Alpha version notice.
+	const lastAlpha = game.settings.get<string>(SETTINGS_NAMESPACE, KEY_ALPHA_VERSION) ?? '0.0.0';
 
+	await doAlphaNotice(lastAlpha);
 	readyConfigs();
 
-	await migrate_UseUuidForVehicles();
+	await performMigrations(lastAlpha);
 
+	registerStoryPointTracker();
 	registerVehicles();
 	registerWorker();
 });
@@ -156,11 +153,7 @@ Hooks.on('renderDialog', (_dialog: Dialog, html: JQuery<HTMLElement>, _data: obj
 	}
 });
 
-Hooks.on('renderSidebarTab', (sidebar: SidebarTab, html: JQuery<HTMLElement>, _data: object) => {
-	if (sidebar.tabName !== 'chat') {
-		return;
-	}
-
+Hooks.on('renderChatLog', (_sidebar: SidebarTab, html: JQuery<HTMLElement>, _data: object) => {
 	const diceIcon = html.find('#chat-controls > .chat-control-icon');
 	diceIcon.on('click', async (_event) => {
 		const controlledTokens = canvas.tokens.controlled;
@@ -180,4 +173,27 @@ Hooks.on('renderSidebarTab', (sidebar: SidebarTab, html: JQuery<HTMLElement>, _d
 
 		await DicePrompt.promptForRoll(targetActor, '');
 	});
+});
+
+// Currently there is no way to specify the class for rendering a compendium collection application since it is
+// hardcoded. However, we can cheat the system into using our own implementation by manually instanciating it and
+// patching the compendium. Also, because we want to apply this even to newly created compendia we run this on every
+// compendium directory bar rendering (it's triggered right after a new compendium is created). We went with this way
+// of cheating the system in order to maintain compatibility with FVTTv10+ and to capture newly created compendia.
+// For context, we want to perform this patch to allow sheets with drop areas to properly highlight when something is
+// being dragged from a compendium.
+const COMPENDIUM_PATCHING = {
+	PATCHED: new Set<string>(),
+	TYPES: ['Actor', 'Item'],
+};
+Hooks.on('renderCompendiumDirectory', (_sidebar: SidebarTab, _html: JQuery<HTMLElement>, _data: object) => {
+	for (const pack of game.packs.values()) {
+		if (!COMPENDIUM_PATCHING.PATCHED.has(pack.metadata.id)) {
+			COMPENDIUM_PATCHING.PATCHED.add(pack.metadata.id);
+			if (COMPENDIUM_PATCHING.TYPES.includes(pack.metadata.type)) {
+				pack.apps.shift();
+				pack.apps.push(new GenesysCompendium(pack));
+			}
+		}
+	}
 });

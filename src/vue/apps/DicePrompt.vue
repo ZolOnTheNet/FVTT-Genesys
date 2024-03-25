@@ -10,43 +10,16 @@ import Localized from '@/vue/components/Localized.vue';
 import MinionDataModel from '@/actor/data/MinionDataModel';
 import { DieType } from '@/dice';
 import { DieCategory } from '@/dice/types/GenesysDie';
+import { GenesysSymbol } from '@/dice/types/GenesysSymbol';
 import CharacterDataModel from '@/actor/data/CharacterDataModel';
 import AdversaryDataModel from '@/actor/data/AdversaryDataModel';
 import GenesysActor from '@/actor/GenesysActor';
-
-const SymbolType = {
-	Triumph: {
-		GLYPH: 't',
-		CATEGORY: 'positive',
-	},
-	Success: {
-		GLYPH: 's',
-		CATEGORY: 'positive',
-	},
-	Advantage: {
-		GLYPH: 'a',
-		CATEGORY: 'positive',
-	},
-
-	Despair: {
-		GLYPH: 'd',
-		CATEGORY: 'negative',
-	},
-	Failure: {
-		GLYPH: 'f',
-		CATEGORY: 'negative',
-	},
-	Threat: {
-		GLYPH: 'h',
-		CATEGORY: 'negative',
-	},
-};
 
 type AlsoNone<T> = T | undefined;
 type PartialRecord<K extends keyof any, T> = Partial<Record<K, T>>;
 
 type DieName = keyof typeof DieType;
-type SymbolName = keyof typeof SymbolType;
+type SymbolName = keyof typeof GenesysSymbol;
 type PoolEntity = DieName | SymbolName;
 
 type NonVehicleActorDataModel = CharacterDataModel | AdversaryDataModel;
@@ -215,7 +188,7 @@ function removeDie(dieName: DieName, index: number) {
 }
 
 function addSymbol(symbolName: SymbolName) {
-	const symbols = SymbolType[symbolName].CATEGORY === 'positive' ? positiveSymbols : negativeSymbols;
+	const symbols = GenesysSymbol[symbolName].CATEGORY === 'positive' ? positiveSymbols : negativeSymbols;
 
 	symbols.value.push(symbolName);
 	symbols.value.sort(sortPoolEntities);
@@ -224,7 +197,7 @@ function addSymbol(symbolName: SymbolName) {
 }
 
 function removeSymbol(symbolName: SymbolName, index: number) {
-	const symbols = SymbolType[symbolName].CATEGORY === 'positive' ? positiveSymbols : negativeSymbols;
+	const symbols = GenesysSymbol[symbolName].CATEGORY === 'positive' ? positiveSymbols : negativeSymbols;
 
 	symbols.value.splice(index, 1);
 
@@ -303,23 +276,28 @@ function compileDicePool() {
 	};
 }
 
+// Convert the symbols object into the old format to make the GenesysRoller understand it.
+// A refactor of said class should get rid of this method.
+function convertToOldSymbolsFormat(symbols: PartialRecord<SymbolName, number>) {
+	return Object.entries(symbols).reduce(
+		(accum, [symbolName, symbolAmount]) => {
+			accum[GenesysSymbol[symbolName as SymbolName].GLYPH] = symbolAmount;
+			return accum;
+		},
+		{} as Record<string, number>,
+	);
+}
+
 async function rollPool() {
 	const { formula, symbols } = compileDicePool();
 
+	const oldFormatSymbols = convertToOldSymbolsFormat(symbols);
 	const baseRollData = {
 		actor: toRaw(context.actor),
 		characteristic: selectedCharacteristic.value,
 		skillId: selectedSkill.value?.id ?? '-',
 		formula,
-		// Convert the symbols object into the old format to make the GenesysRoller understand it.
-		// A refactor of said class should get rid of this conversion.
-		symbols: Object.entries(symbols).reduce(
-			(accum, [symbolName, symbolAmount]) => {
-				accum[SymbolType[symbolName as SymbolName].GLYPH] = symbolAmount;
-				return accum;
-			},
-			{} as Record<string, number>,
-		),
+		symbols: oldFormatSymbols,
 	};
 
 	switch (context.rollType) {
@@ -336,7 +314,7 @@ async function rollPool() {
 
 		case RollType.Initiative:
 			(context.rollData as InitiativeRollData).resolvePromise({
-				roll: new Roll(formula, { symbols }),
+				roll: new Roll(formula, { symbols: oldFormatSymbols }),
 				skillName: selectedSkill.value?.name ?? 'Unskilled',
 			});
 			break;
@@ -415,18 +393,9 @@ async function approximateProbability() {
 			criteriaType: 'SUCCESS',
 		})) as number;
 	} else {
-		// Convert the symbols object into the old format to make the GenesysRoller understand it.
-		// A refactor of said class should get rid of this conversion.
-		const oldFormatSymbols = Object.entries(symbols).reduce(
-			(accum, [symbolName, symbolAmount]) => {
-				accum[SymbolType[symbolName as SymbolName].GLYPH] = symbolAmount;
-				return accum;
-			},
-			{} as Record<string, number>,
-		);
 		const simulation = await Promise.all(
 			[...Array(CHANCE_TO_SUCCEED_BY_SIMULATION_NUM_ROLLS)].map(async () => {
-				const roll = new Roll(formula, { symbols: oldFormatSymbols });
+				const roll = new Roll(formula, { symbols: convertToOldSymbolsFormat(symbols) });
 				const result = await roll.evaluate({ async: true });
 				return GenesysRoller.parseRollResults(result);
 			}),
@@ -443,7 +412,6 @@ async function approximateProbability() {
 	<div class="genesys dice-prompt">
 		<!-- Header Text -->
 		<header>
-			<span><Localized label="Genesys.DicePrompt.Title" /></span>
 			<span class="hint"><Localized label="Genesys.DicePrompt.Hint" /></span>
 		</header>
 
@@ -452,13 +420,13 @@ async function approximateProbability() {
 			<!-- Positive Pool -->
 			<div class="positive">
 				<div v-for="(dieName, index) in positiveDice" :key="index" @click="removeDie(dieName, index)" :class="`die die-${dieName}`">{{ DieType[dieName].GLYPH }}</div>
-				<div v-for="(symbolName, index) in positiveSymbols" :key="index" @click="removeSymbol(symbolName, index)" class="symbol">{{ SymbolType[symbolName].GLYPH }}</div>
+				<div v-for="(symbolName, index) in positiveSymbols" :key="index" @click="removeSymbol(symbolName, index)" class="symbol">{{ GenesysSymbol[symbolName].GLYPH }}</div>
 			</div>
 
 			<!-- Negative Pool -->
 			<div class="negative">
 				<div v-for="(dieName, index) in negativeDice" :key="index" @click="removeDie(dieName, index)" :class="`die die-${dieName}`">{{ DieType[dieName].GLYPH }}</div>
-				<div v-for="(symbolName, index) in negativeSymbols" :key="index" @click="removeSymbol(symbolName, index)" class="symbol">{{ SymbolType[symbolName].GLYPH }}</div>
+				<div v-for="(symbolName, index) in negativeSymbols" :key="index" @click="removeSymbol(symbolName, index)" class="symbol">{{ GenesysSymbol[symbolName].GLYPH }}</div>
 			</div>
 
 			<!-- Dice Box -->
@@ -517,6 +485,7 @@ async function approximateProbability() {
 		<div v-if="USE_CHANCE_TO_SUCCEED" class="chance-to-succeed">
 			<label>
 				<i class="fas fa-circle-info" :data-tooltip="`Genesys.DicePrompt.ChanceToSucceedBy${USE_CHANCE_TO_SUCCEED_BY_PERMUTATION ? 'Permutation' : 'Simulation'}Disclaimer`"></i>
+				{{ '\xa0' }}
 				<Localized label="Genesys.DicePrompt.ChanceToSucceed" />
 			</label>
 
@@ -529,10 +498,8 @@ async function approximateProbability() {
 	</div>
 </template>
 
-<style lang="scss" scoped>
+<style lang="scss">
 @use '@scss/mixins/backgrounds.scss';
-@use '@scss/vars/colors.scss';
-@use '@scss/vars/sheet.scss';
 
 .app-dice-prompt {
 	min-width: 500px;
@@ -542,6 +509,11 @@ async function approximateProbability() {
 		@include backgrounds.crossboxes();
 	}
 }
+</style>
+
+<style lang="scss" scoped>
+@use '@scss/vars/colors.scss';
+@use '@scss/vars/sheet.scss';
 
 .dice-prompt {
 	display: grid;
@@ -559,8 +531,8 @@ async function approximateProbability() {
 
 		.hint {
 			font-family: 'Roboto', serif;
-			font-size: 0.8rem;
-			color: colors.$dark-blue;
+			font-size: 1rem;
+			// color: colors.$dark-blue;
 		}
 	}
 
